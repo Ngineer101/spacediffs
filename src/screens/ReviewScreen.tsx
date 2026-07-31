@@ -65,6 +65,10 @@ export function ReviewScreen({
       if (e.key === "a" || e.key === "A") pick("approve");
       else if (e.key === "f" || e.key === "F") pick("flag");
       else if (e.key === "Enter") launch();
+      else return;
+      // Stop the shortcut keystroke from also typing into the comment box
+      // the moment it receives focus.
+      e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

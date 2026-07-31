@@ -7,9 +7,16 @@ export interface PrRef {
 }
 
 export function parsePrUrl(input: string): PrRef | null {
-  const trimmed = input.trim();
+  // Accepts github.com or spacediffs.com PR URLs, bare "/owner/repo/pull/123"
+  // paths (our GitHub-style deep links), and "owner/repo#123" shorthand.
+  // Strips any scheme://host[:port]/ prefix first; GitHub owners can't
+  // contain dots, so a bare owner/repo path is never mistaken for a host.
+  const trimmed = input
+    .trim()
+    .replace(/^(?:https?:\/\/)?(?:www\.)?(?:[\w-]+(?:\.[\w-]+)+|localhost)(?::\d+)?\//, "")
+    .replace(/^\//, "");
   const match =
-    /^(?:https?:\/\/)?(?:www\.)?github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/.exec(trimmed) ??
+    /^([\w.-]+)\/([\w.-]+)\/pull\/(\d+)/.exec(trimmed) ??
     /^([\w.-]+)\/([\w.-]+)#(\d+)$/.exec(trimmed);
   if (!match) return null;
   return { owner: match[1], repo: match[2], number: Number(match[3]) };

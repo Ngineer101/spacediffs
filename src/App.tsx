@@ -88,6 +88,12 @@ export default function App() {
         setError("That doesn't look like a GitHub PR link (github.com/owner/repo/pull/123).");
         return;
       }
+      // GitHub-style shareable URL: spacediffs.com/<owner>/<repo>/pull/<n>
+      window.history.replaceState(null, "", `/${ref.owner}/${ref.repo}/pull/${ref.number}`);
+      if (ref.owner === DEMO_PR.owner && ref.repo === DEMO_PR.repo) {
+        startMission(DEMO_PR);
+        return;
+      }
       setError(null);
       setPhase("loading");
       try {
@@ -95,11 +101,18 @@ export default function App() {
         startMission(pr);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load PR.");
+        window.history.replaceState(null, "", "/");
         setPhase("title");
       }
     },
     [startMission],
   );
+
+  // GitHub-style deep links: pasting a PR URL with github.com swapped for
+  // spacediffs.com lands on /<owner>/<repo>/pull/<n> and boots the mission.
+  useEffect(() => {
+    if (parsePrUrl(window.location.pathname)) void handleLaunch(window.location.pathname);
+  }, [handleLaunch]);
 
   const handleReview = useCallback(
     (review: Review) => {
@@ -161,6 +174,7 @@ export default function App() {
   );
 
   const handleRestart = useCallback(() => {
+    window.history.replaceState(null, "", "/");
     setMission(null);
     setError(null);
     setPhase("title");
@@ -196,7 +210,7 @@ export default function App() {
             error={error}
             busy={false}
             onLaunch={handleLaunch}
-            onDemo={() => startMission(DEMO_PR)}
+            onDemo={() => handleLaunch(`${DEMO_PR.owner}/${DEMO_PR.repo}/pull/${DEMO_PR.number}`)}
             onLogout={() => {
               void logout().then(() => setUser(null));
             }}
