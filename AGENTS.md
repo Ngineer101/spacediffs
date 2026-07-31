@@ -57,9 +57,11 @@ One Cloudflare Worker serves everything: static SPA assets + a Hono API.
   dots and dot-only repo names to prevent path traversal into other GitHub
   API endpoints.
 - `src/App.tsx` — phase state machine: `title → loading → briefing →
-(review → wave)* → debrief`. Owns session state (score, lives, multiplier,
-  stats, reviews). Also: global click-blur listener (see gotchas) and
-  GitHub-style deep-link handling.
+(review → wave)* → debrief`, plus a `leaderboard` phase. Owns session state
+  (score, lives, multiplier, stats, reviews). Also: global click-blur listener
+  (see gotchas), GitHub-style deep-link handling, and the pending-submission
+  flow (a debrief run stashed in sessionStorage before the OAuth redirect is
+  auto-transmitted once the user returns signed in).
 - `src/screens/` — one component per phase. `WaveScreen` hosts the engine and
   its overlays (READY / WAVE CLEAR / GAME OVER with continues).
 - `src/game/engine.ts` — self-contained Canvas-2D game engine (no React):
@@ -80,6 +82,36 @@ One Cloudflare Worker serves everything: static SPA assets + a Hono API.
 - `src/global.css` — the entire stylesheet, organized by commented sections.
   Palette + fonts are CSS vars on `:root` (phosphor green `#33ff66`, amber,
   red; "Press Start 2P" for display, "VT323" for terminal text).
+
+## Leaderboard (D1)
+
+Public leaderboard backed by the `spacediffs-leaderboard` D1 database
+(binding `DB` in `wrangler.jsonc`; local dev gets an auto-created local copy —
+the worker lazily applies `CREATE TABLE IF NOT EXISTS` once per isolate, so
+there is no migration step). Tables: `leaderboard` (one row per GitHub login,
+personal best only) and `submit_limits` (fixed-window rate limiting).
+
+- `GET /api/leaderboard?limit=N` — public, top 100 max, `Cache-Control` 30s.
+- `POST /api/leaderboard` — requires a session. Identity (login + avatar)
+  comes from GitHub's `/user`, never from the request body. Rejections:
+  training missions (`spacediffs/*`), >12 submissions/hour/login, PRs that
+  don't exist on GitHub, and scores above a plausibility bound derived from
+  the PR's diff size (`30_000 + 400 × changed lines` — generous because
+  continue-farming makes a strict bound impossible; it only filters the
+  absurd). Best-per-player is enforced with an upsert guarded by
+  `improved = score > existing`.
+- Submission is AUTOMATIC: the debrief auto-transmits for signed-in users
+  (score > 0, real PR; StrictMode-guarded with a ref), with a RETRY button on
+  failure. Signed-out users get the sign-in stash flow. The manual button was
+  removed deliberately — it wasn't a security control, and it cost real
+  scores; don't reintroduce it.
+- Client: `src/lib/leaderboard.ts` (fetch/submit + the sessionStorage
+  pending-submission stash), `src/screens/LeaderboardScreen.tsx` (full board
+  at `/leaderboard`), top-10 panel on the title screen, transmit panel on the
+  debrief.
+- Seed local test data with
+  `./node_modules/.bin/wrangler d1 execute spacediffs-leaderboard --local --command "INSERT ..."`
+  (plain `npx wrangler` fails under the npm 12 devEngines pin).
 
 ## URL structure
 

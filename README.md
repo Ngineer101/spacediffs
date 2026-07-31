@@ -23,6 +23,14 @@ paste back on the PR.
   ×3). High score persists in `localStorage`.
 - The **debrief** lists every flag with its comment plus your arcade stats,
   and a COPY REVIEW button emits GitHub-flavoured markdown.
+- **Galactic Rankings** — a public leaderboard (Cloudflare D1). Signed-in
+  pilots transmit automatically when the debrief opens; signed-out pilots get
+  a one-click sign-in that transmits the stashed run right after OAuth. The
+  board keeps one row per pilot (personal best, real PRs only — training
+  missions stay local). Top 10 on the title screen, full top 100 at
+  [/leaderboard](https://spacediffs.com/leaderboard). Submissions are
+  rate-limited and sanity-checked server-side against the PR's actual diff
+  size.
 
 ## GitHub-style URLs
 
@@ -55,6 +63,8 @@ form. The training mission is one too — and works fully offline:
   **Cloudflare Worker** (static assets + API) via `@cloudflare/vite-plugin`
 - Hono on the Worker for GitHub OAuth + a PR proxy — the GitHub token is
   AES-GCM-sealed into an HttpOnly cookie and never reaches the browser
+- **D1** (`spacediffs-leaderboard`) for the public leaderboard — schema is
+  applied automatically, works in local dev with zero setup
 - Canvas 2D game engine (formation marching, destructible bunkers, particles,
   elite bugs, UFOs) at a logical 448×512, CSS-scaled and pixelated
 - three.js starfield backdrop with warp-speed transitions between phases

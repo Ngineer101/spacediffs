@@ -5,6 +5,7 @@ import { buildWave } from "./game/waves";
 import { DEMO_PR } from "./lib/demo";
 import type { HunkReview } from "./lib/exportReview";
 import { fetchMe, fetchPr, logout, parsePrUrl } from "./lib/github";
+import { submitScore, takePendingSubmission, type ScoreSubmission } from "./lib/leaderboard";
 import { parsePr } from "./lib/parseDiff";
 import { sfx } from "./lib/sound";
 import {
@@ -17,13 +18,14 @@ import {
 } from "./lib/types";
 import { BriefingScreen } from "./screens/BriefingScreen";
 import { DebriefScreen } from "./screens/DebriefScreen";
+import { LeaderboardScreen } from "./screens/LeaderboardScreen";
 import { ReviewScreen } from "./screens/ReviewScreen";
 import { TitleScreen } from "./screens/TitleScreen";
 import { WaveScreen, type WaveOutcome } from "./screens/WaveScreen";
 
 const HISCORE_KEY = "spacediffs_hiscore";
 
-type Phase = "title" | "loading" | "briefing" | "review" | "wave" | "debrief";
+type Phase = "title" | "loading" | "briefing" | "review" | "wave" | "debrief" | "leaderboard";
 
 interface Mission {
   pr: PRData;
@@ -45,10 +47,30 @@ export default function App() {
   const [hiScore, setHiScore] = useState(() => Number(localStorage.getItem(HISCORE_KEY)) || 0);
   const [isNewHiScore, setIsNewHiScore] = useState(false);
   const [muted, setMuted] = useState(sfx.muted);
+  const [transmitNote, setTransmitNote] = useState<string | null>(null);
 
   useEffect(() => {
     void fetchMe().then(setUser);
   }, []);
+
+  // A run stashed before the OAuth redirect gets transmitted automatically
+  // once the user comes back signed in.
+  useEffect(() => {
+    if (!user) return;
+    const pending = takePendingSubmission();
+    if (!pending) return;
+    submitScore(pending)
+      .then((result) =>
+        setTransmitNote(
+          result.improved
+            ? `SCORE TRANSMITTED — RANK #${result.rank}`
+            : `PERSONAL BEST REMAINS ${result.best.toLocaleString()} (RANK #${result.rank})`,
+        ),
+      )
+      .catch((err: unknown) =>
+        setTransmitNote(err instanceof Error ? err.message : "Transmission failed."),
+      );
+  }, [user]);
 
   // Arcade keyboard UX: all shortcuts are global window handlers, so drop
   // focus after any button click — otherwise Enter/Space re-triggers the
@@ -110,9 +132,21 @@ export default function App() {
 
   // GitHub-style deep links: pasting a PR URL with github.com swapped for
   // spacediffs.com lands on /<owner>/<repo>/pull/<n> and boots the mission.
+  // /leaderboard is the only other routed page.
   useEffect(() => {
-    if (parsePrUrl(window.location.pathname)) void handleLaunch(window.location.pathname);
+    if (window.location.pathname === "/leaderboard") setPhase("leaderboard");
+    else if (parsePrUrl(window.location.pathname)) void handleLaunch(window.location.pathname);
   }, [handleLaunch]);
+
+  const openLeaderboard = useCallback(() => {
+    window.history.replaceState(null, "", "/leaderboard");
+    setPhase("leaderboard");
+  }, []);
+
+  const closeLeaderboard = useCallback(() => {
+    window.history.replaceState(null, "", "/");
+    setPhase("title");
+  }, []);
 
   const handleReview = useCallback(
     (review: Review) => {
@@ -188,6 +222,18 @@ export default function App() {
     [mission, reviews],
   );
 
+  const submission: ScoreSubmission | null = mission
+    ? {
+        score,
+        prOwner: mission.pr.owner,
+        prRepo: mission.pr.repo,
+        prNumber: mission.pr.number,
+        accuracy: stats.shotsFired > 0 ? Math.round((stats.shotsHit / stats.shotsFired) * 100) : 0,
+        wavesCleared: stats.wavesCleared,
+        flags: entries.filter((e) => e.review?.verdict === "flag").length,
+      }
+    : null;
+
   const currentHunk = mission?.hunks[current] ?? null;
   const currentReview = reviews[current] ?? null;
   const waveConfig = useMemo(
@@ -209,13 +255,17 @@ export default function App() {
             hiScore={hiScore}
             error={error}
             busy={false}
+            transmitNote={transmitNote}
             onLaunch={handleLaunch}
             onDemo={() => handleLaunch(`${DEMO_PR.owner}/${DEMO_PR.repo}/pull/${DEMO_PR.number}`)}
             onLogout={() => {
               void logout().then(() => setUser(null));
             }}
+            onLeaderboard={openLeaderboard}
           />
         )}
+
+        {phase === "leaderboard" && <LeaderboardScreen user={user} onBack={closeLeaderboard} />}
 
         {phase === "loading" && (
           <div className="screen loading-screen">
@@ -256,7 +306,7 @@ export default function App() {
           />
         )}
 
-        {phase === "debrief" && mission && (
+        {phase === "debrief" && mission && submission && (
           <DebriefScreen
             pr={mission.pr}
             entries={entries}
@@ -264,7 +314,11 @@ export default function App() {
             hiScore={hiScore}
             isNewHiScore={isNewHiScore}
             stats={stats}
+            user={user}
+            isDemo={mission.pr.owner === DEMO_PR.owner}
+            submission={submission}
             onRestart={handleRestart}
+            onLeaderboard={openLeaderboard}
           />
         )}
       </main>

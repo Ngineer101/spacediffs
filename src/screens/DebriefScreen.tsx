@@ -1,7 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { buildMarkdown, hunkLocation, type HunkReview } from "../lib/exportReview";
+import {
+  stashPendingSubmission,
+  submitScore,
+  type ScoreSubmission,
+  type SubmitResult,
+} from "../lib/leaderboard";
 import { sfx } from "../lib/sound";
-import type { PRData, SessionStats } from "../lib/types";
+import type { GitHubUser, PRData, SessionStats } from "../lib/types";
 
 export function DebriefScreen({
   pr,
@@ -10,7 +16,11 @@ export function DebriefScreen({
   hiScore,
   isNewHiScore,
   stats,
+  user,
+  isDemo,
+  submission,
   onRestart,
+  onLeaderboard,
 }: {
   pr: PRData;
   entries: HunkReview[];
@@ -18,9 +28,44 @@ export function DebriefScreen({
   hiScore: number;
   isNewHiScore: boolean;
   stats: SessionStats;
+  user: GitHubUser | null;
+  isDemo: boolean;
+  submission: ScoreSubmission;
   onRestart: () => void;
+  onLeaderboard: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [transmit, setTransmit] = useState<
+    | { state: "idle" }
+    | { state: "sending" }
+    | { state: "done"; result: SubmitResult }
+    | { state: "error"; message: string }
+  >({ state: "idle" });
+
+  const transmitScore = async () => {
+    setTransmit({ state: "sending" });
+    try {
+      const result = await submitScore(submission);
+      sfx.powerup();
+      setTransmit({ state: "done", result });
+    } catch (err) {
+      setTransmit({
+        state: "error",
+        message: err instanceof Error ? err.message : "Transmission failed.",
+      });
+    }
+  };
+
+  // Signed-in pilots transmit automatically — the manual button was pure
+  // friction, not a security control (all abuse defenses are server-side).
+  // The ref guards against StrictMode's double-mounted effects.
+  const autoSent = useRef(false);
+  useEffect(() => {
+    if (autoSent.current || isDemo || !user || submission.score <= 0) return;
+    autoSent.current = true;
+    void transmitScore();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const markdown = useMemo(
     () => buildMarkdown(pr, entries, score, stats),
     [pr, entries, score, stats],
@@ -76,6 +121,49 @@ export function DebriefScreen({
         </div>
       </div>
 
+      <div className="panel transmit-panel">
+        <p className="panel-label">GALACTIC RANKINGS</p>
+        {isDemo ? (
+          <p className="term dim">TRAINING SCORES STAY LOCAL — FLY A REAL PR TO RANK.</p>
+        ) : transmit.state === "done" ? (
+          <p className="term amber">
+            {transmit.result.improved
+              ? `★ SCORE TRANSMITTED — RANK #${transmit.result.rank} ★`
+              : `PERSONAL BEST REMAINS ${transmit.result.best.toLocaleString()} (RANK #${transmit.result.rank})`}
+          </p>
+        ) : user ? (
+          submission.score <= 0 ? (
+            <p className="term dim">NO POINTS ON THE BOARD — NOTHING TO TRANSMIT.</p>
+          ) : transmit.state === "error" ? (
+            <div className="transmit-row">
+              <button
+                className="btn"
+                onClick={() => {
+                  sfx.uiSelect();
+                  void transmitScore();
+                }}
+              >
+                ▸ RETRY TRANSMISSION
+              </button>
+              <p className="error-text term">✖ {transmit.message}</p>
+            </div>
+          ) : (
+            <p className="term blink">TRANSMITTING SCORE...</p>
+          )
+        ) : (
+          <a
+            className="btn btn-ghost"
+            href="/api/auth/login"
+            onClick={() => {
+              sfx.uiSelect();
+              stashPendingSubmission(submission);
+            }}
+          >
+            ▸ SIGN IN WITH GITHUB TO TRANSMIT
+          </a>
+        )}
+      </div>
+
       {flagged.length > 0 && (
         <div className="panel flags-panel">
           <p className="panel-label red">🚩 FLAGGED FOR HUMAN ATTENTION</p>
@@ -104,6 +192,15 @@ export function DebriefScreen({
       </div>
 
       <div className="debrief-actions">
+        <button
+          className="btn btn-ghost"
+          onClick={() => {
+            sfx.uiSelect();
+            onLeaderboard();
+          }}
+        >
+          VIEW RANKINGS
+        </button>
         <a
           className="btn btn-ghost"
           href={pr.htmlUrl}

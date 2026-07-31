@@ -10,4 +10,11 @@
   "observability": {
     "enabled": true,
   },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "spacediffs-leaderboard",
+      "database_id": "093d7e6e-6f28-4b8a-978c-f691b1664e85",
+    },
+  ],
 }

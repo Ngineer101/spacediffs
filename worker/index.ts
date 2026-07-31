@@ -3,6 +3,7 @@ import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 
 type Env = {
   ASSETS: Fetcher;
+  DB: D1Database;
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
   SESSION_SECRET?: string;
@@ -318,6 +319,199 @@ app.get("/api/pr", async (c) => {
       })),
     },
   });
+});
+
+// ---------------------------------------------------------------------------
+// Leaderboard (D1)
+// ---------------------------------------------------------------------------
+
+const LEADERBOARD_SCHEMA = `
+CREATE TABLE IF NOT EXISTS leaderboard (
+  login TEXT PRIMARY KEY,
+  avatar_url TEXT NOT NULL,
+  score INTEGER NOT NULL,
+  pr_owner TEXT NOT NULL,
+  pr_repo TEXT NOT NULL,
+  pr_number INTEGER NOT NULL,
+  accuracy INTEGER NOT NULL,
+  waves_cleared INTEGER NOT NULL,
+  flags INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_leaderboard_score ON leaderboard (score DESC);
+CREATE TABLE IF NOT EXISTS submit_limits (
+  login TEXT PRIMARY KEY,
+  window_start INTEGER NOT NULL,
+  count INTEGER NOT NULL
+);`;
+
+// Idempotent, once per isolate — keeps local dev D1 working with zero setup.
+let schemaReady: Promise<unknown> | null = null;
+function ensureSchema(db: D1Database) {
+  schemaReady ??= db.exec(LEADERBOARD_SCHEMA.replaceAll("\n", " "));
+  return schemaReady;
+}
+
+const DEMO_OWNER = "spacediffs";
+const MAX_SUBMITS_PER_HOUR = 12;
+const GLOBAL_SCORE_CAP = 10_000_000;
+
+app.get("/api/leaderboard", async (c) => {
+  await ensureSchema(c.env.DB);
+  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 100, 1), 100);
+  const { results } = await c.env.DB.prepare(
+    `SELECT login, avatar_url, score, pr_owner, pr_repo, pr_number, accuracy,
+            waves_cleared, flags, updated_at
+     FROM leaderboard ORDER BY score DESC, updated_at ASC LIMIT ?`,
+  )
+    .bind(limit)
+    .all();
+  c.header("Cache-Control", "public, max-age=30");
+  return c.json({
+    entries: (results as Record<string, unknown>[]).map((row, i) => ({
+      rank: i + 1,
+      login: row.login,
+      avatarUrl: row.avatar_url,
+      score: row.score,
+      prOwner: row.pr_owner,
+      prRepo: row.pr_repo,
+      prNumber: row.pr_number,
+      accuracy: row.accuracy,
+      wavesCleared: row.waves_cleared,
+      flags: row.flags,
+      updatedAt: row.updated_at,
+    })),
+  });
+});
+
+app.post("/api/leaderboard", async (c) => {
+  const session = await getSession(c, c.env);
+  if (!session) {
+    return c.json({ error: "Sign in with GitHub to transmit scores." }, 401);
+  }
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body." }, 400);
+  }
+  const b = body as Record<string, unknown>;
+  const score = b.score;
+  const prOwner = b.prOwner;
+  const prRepo = b.prRepo;
+  const prNumber = b.prNumber;
+  const accuracy = b.accuracy;
+  const wavesCleared = b.wavesCleared;
+  const flags = b.flags;
+  const isInt = (v: unknown, max: number): v is number =>
+    typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= max;
+  if (
+    !isInt(score, GLOBAL_SCORE_CAP) ||
+    !isInt(prNumber, 100_000_000) ||
+    !isInt(accuracy, 100) ||
+    !isInt(wavesCleared, 10_000) ||
+    !isInt(flags, 10_000) ||
+    typeof prOwner !== "string" ||
+    typeof prRepo !== "string" ||
+    !/^[\w-]+$/.test(prOwner) ||
+    !/^[\w.-]+$/.test(prRepo) ||
+    /^\.+$/.test(prRepo)
+  ) {
+    return c.json({ error: "Invalid submission." }, 400);
+  }
+  if (prOwner === DEMO_OWNER) {
+    return c.json({ error: "Training missions stay local — fly a real PR to rank." }, 422);
+  }
+
+  // Identity comes from GitHub, never from the client body.
+  const userResponse = await fetch(`${GITHUB_API}/user`, {
+    headers: githubHeaders(session.token),
+  });
+  if (!userResponse.ok) {
+    return c.json({ error: "GitHub session expired — sign in again." }, 401);
+  }
+  const ghUser = (await userResponse.json()) as { login: string; avatar_url: string };
+
+  await ensureSchema(c.env.DB);
+
+  // Fixed-window rate limit per GitHub account.
+  const now = Date.now();
+  const windowStart = now - (now % 3_600_000);
+  const usage = await c.env.DB.prepare(
+    "SELECT window_start, count FROM submit_limits WHERE login = ?",
+  )
+    .bind(ghUser.login)
+    .first<{ window_start: number; count: number }>();
+  if (usage && usage.window_start === windowStart && usage.count >= MAX_SUBMITS_PER_HOUR) {
+    return c.json({ error: "Too many transmissions — try again next hour." }, 429);
+  }
+  await c.env.DB.prepare(
+    `INSERT INTO submit_limits (login, window_start, count) VALUES (?, ?, 1)
+     ON CONFLICT(login) DO UPDATE SET
+       count = CASE WHEN submit_limits.window_start = excluded.window_start THEN submit_limits.count + 1 ELSE 1 END,
+       window_start = excluded.window_start`,
+  )
+    .bind(ghUser.login, windowStart)
+    .run();
+
+  // Plausibility: the PR must exist, and the score must fit a generous bound
+  // derived from the diff size. Continue-farming makes a strict bound
+  // impossible, so this only filters out the absurd.
+  const prResponse = await fetch(`${GITHUB_API}/repos/${prOwner}/${prRepo}/pulls/${prNumber}`, {
+    headers: githubHeaders(session.token),
+  });
+  if (!prResponse.ok) {
+    return c.json({ error: "Could not verify that PR on GitHub." }, 422);
+  }
+  const pr = (await prResponse.json()) as { additions: number; deletions: number };
+  const changedLines = (pr.additions ?? 0) + (pr.deletions ?? 0);
+  const plausibleMax = Math.min(30_000 + changedLines * 400, GLOBAL_SCORE_CAP);
+  if (score > plausibleMax) {
+    return c.json({ error: "Score rejected by mission control (implausible for that PR)." }, 422);
+  }
+
+  const existing = await c.env.DB.prepare("SELECT score FROM leaderboard WHERE login = ?")
+    .bind(ghUser.login)
+    .first<{ score: number }>();
+  const improved = !existing || score > existing.score;
+  if (improved) {
+    await c.env.DB.prepare(
+      `INSERT INTO leaderboard
+         (login, avatar_url, score, pr_owner, pr_repo, pr_number, accuracy,
+          waves_cleared, flags, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(login) DO UPDATE SET
+         avatar_url = excluded.avatar_url, score = excluded.score,
+         pr_owner = excluded.pr_owner, pr_repo = excluded.pr_repo,
+         pr_number = excluded.pr_number, accuracy = excluded.accuracy,
+         waves_cleared = excluded.waves_cleared, flags = excluded.flags,
+         updated_at = excluded.updated_at`,
+    )
+      .bind(
+        ghUser.login,
+        ghUser.avatar_url,
+        score,
+        prOwner,
+        prRepo,
+        prNumber,
+        accuracy,
+        wavesCleared,
+        flags,
+        now,
+        now,
+      )
+      .run();
+  }
+
+  const best = improved ? score : existing.score;
+  const rank = await c.env.DB.prepare(
+    "SELECT COUNT(*) + 1 AS rank FROM leaderboard WHERE score > ?",
+  )
+    .bind(best)
+    .first<{ rank: number }>();
+  return c.json({ improved, best, rank: rank?.rank ?? 1 });
 });
 
 app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { PixelIcon } from "../components/PixelIcon";
+import { fetchLeaderboard, type LeaderboardEntry } from "../lib/leaderboard";
 import { sfx } from "../lib/sound";
 import type { GitHubUser } from "../lib/types";
 
@@ -8,20 +9,31 @@ export function TitleScreen({
   hiScore,
   error,
   busy,
+  transmitNote,
   onLaunch,
   onDemo,
   onLogout,
+  onLeaderboard,
 }: {
   user: GitHubUser | null;
   hiScore: number;
   error: string | null;
   busy: boolean;
+  transmitNote: string | null;
   onLaunch: (input: string) => void;
   onDemo: () => void;
   onLogout: () => void;
+  onLeaderboard: () => void;
 }) {
   const [input, setInput] = useState("");
   const [authNote, setAuthNote] = useState<string | null>(null);
+  const [top, setTop] = useState<LeaderboardEntry[]>([]);
+
+  useEffect(() => {
+    fetchLeaderboard(10)
+      .then(setTop)
+      .catch(() => setTop([]));
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -163,6 +175,32 @@ export function TitleScreen({
         disabled={busy}
       >
         [ NO PR HANDY? RUN TRAINING MISSION ]
+      </button>
+
+      {transmitNote && <p className="term transmit-note amber">★ {transmitNote} ★</p>}
+
+      {top.length > 0 && (
+        <div className="panel title-board">
+          <p className="panel-label">GALACTIC RANKINGS — TOP {top.length}</p>
+          <ol className="title-board-list term">
+            {top.map((entry) => (
+              <li key={entry.login} className={entry.rank === 1 ? "rank-gold" : ""}>
+                <span className="title-board-rank">#{entry.rank}</span>
+                <span className="title-board-pilot">{entry.login.toUpperCase()}</span>
+                <span className="title-board-score">{entry.score.toLocaleString()}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+      <button
+        className="link-btn term"
+        onClick={() => {
+          sfx.uiSelect();
+          onLeaderboard();
+        }}
+      >
+        [ VIEW FULL RANKINGS ]
       </button>
 
       <p className="hi-score term">HI-SCORE {hiScore.toLocaleString()}</p>
