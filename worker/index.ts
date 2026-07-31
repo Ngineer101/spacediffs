@@ -12,6 +12,7 @@ const SESSION_COOKIE = "sd_session";
 const STATE_COOKIE = "sd_oauth_state";
 const GITHUB_API = "https://api.github.com";
 const USER_AGENT = "spacediffs-code-review-arcade";
+const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
 // ---------------------------------------------------------------------------
 // Session cookie sealing (AES-GCM keyed off SESSION_SECRET)
@@ -67,11 +68,34 @@ async function unseal(secret: string, sealed: string): Promise<string | null> {
 // GitHub helpers
 // ---------------------------------------------------------------------------
 
-async function getSessionToken(c: { req: { raw: Request } }, env: Env): Promise<string | null> {
+interface Session {
+  token: string;
+  /** OAuth scopes GitHub actually granted (comma-separated, "" = public read-only). */
+  scope: string;
+}
+
+/**
+ * The sealed payload carries its own issued-at so a captured cookie blob
+ * expires server-side too — the cookie Max-Age only governs the browser.
+ */
+async function getSession(c: { req: { raw: Request } }, env: Env): Promise<Session | null> {
   if (!env.SESSION_SECRET) return null;
   const cookie = getCookie(c as never, SESSION_COOKIE);
   if (!cookie) return null;
-  return unseal(env.SESSION_SECRET, cookie);
+  const plaintext = await unseal(env.SESSION_SECRET, cookie);
+  if (!plaintext) return null;
+  try {
+    const data = JSON.parse(plaintext) as { t?: unknown; iat?: unknown; s?: unknown };
+    if (typeof data.t !== "string" || typeof data.iat !== "number") return null;
+    if (Date.now() - data.iat > SESSION_MAX_AGE_SECONDS * 1000) return null;
+    return { token: data.t, scope: typeof data.s === "string" ? data.s : "" };
+  } catch {
+    return null;
+  }
+}
+
+function hasPrivateAccess(session: Session): boolean {
+  return session.scope.split(",").some((s) => s.trim() === "repo");
 }
 
 function githubHeaders(token: string | null): HeadersInit {
@@ -104,10 +128,15 @@ app.get("/api/auth/login", async (c) => {
     path: "/",
     maxAge: 600,
   });
+  // Least privilege: an empty scope grants read-only access to public data
+  // (plus the authenticated 5k/hr rate limit), which is all the app needs.
+  // "repo" — the only escalation we accept — is requested solely when the
+  // user explicitly opts in for private repositories.
+  const scope = c.req.query("scope") === "repo" ? "repo" : "";
   const authorize = new URL("https://github.com/login/oauth/authorize");
   authorize.searchParams.set("client_id", GITHUB_CLIENT_ID);
   authorize.searchParams.set("redirect_uri", `${origin}/api/auth/callback`);
-  authorize.searchParams.set("scope", "repo");
+  if (scope) authorize.searchParams.set("scope", scope);
   authorize.searchParams.set("state", state);
   return c.redirect(authorize.toString());
 });
@@ -140,6 +169,7 @@ app.get("/api/auth/callback", async (c) => {
   });
   const tokenData = (await tokenResponse.json()) as {
     access_token?: string;
+    scope?: string;
     error?: string;
   };
   if (!tokenData.access_token) {
@@ -147,12 +177,17 @@ app.get("/api/auth/callback", async (c) => {
   }
 
   const origin = new URL(c.req.url).origin;
-  setCookie(c, SESSION_COOKIE, await seal(SESSION_SECRET, tokenData.access_token), {
+  const payload = JSON.stringify({
+    t: tokenData.access_token,
+    iat: Date.now(),
+    s: tokenData.scope ?? "",
+  });
+  setCookie(c, SESSION_COOKIE, await seal(SESSION_SECRET, payload), {
     httpOnly: true,
     secure: origin.startsWith("https"),
     sameSite: "Lax",
     path: "/",
-    maxAge: 60 * 60 * 24 * 30,
+    maxAge: SESSION_MAX_AGE_SECONDS,
   });
   return c.redirect("/");
 });
@@ -163,10 +198,10 @@ app.post("/api/auth/logout", (c) => {
 });
 
 app.get("/api/me", async (c) => {
-  const token = await getSessionToken(c, c.env);
-  if (!token) return c.json({ user: null });
+  const session = await getSession(c, c.env);
+  if (!session) return c.json({ user: null });
   const response = await fetch(`${GITHUB_API}/user`, {
-    headers: githubHeaders(token),
+    headers: githubHeaders(session.token),
   });
   if (!response.ok) {
     deleteCookie(c, SESSION_COOKIE, { path: "/" });
@@ -178,7 +213,12 @@ app.get("/api/me", async (c) => {
     avatar_url: string;
   };
   return c.json({
-    user: { login: user.login, name: user.name, avatarUrl: user.avatar_url },
+    user: {
+      login: user.login,
+      name: user.name,
+      avatarUrl: user.avatar_url,
+      privateAccess: hasPrivateAccess(session),
+    },
   });
 });
 
@@ -191,24 +231,26 @@ app.get("/api/pr", async (c) => {
   if (!owner || !repo || !number || !/^\d+$/.test(number)) {
     return c.json({ error: "Expected owner, repo and number query params." }, 400);
   }
-  if (!/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(repo)) {
+  // GitHub owners are alphanumeric/hyphen (no dots); repo names may contain
+  // dots but never consist solely of them. Rejecting "." / ".." keeps dot
+  // segments from rewriting the proxied API path.
+  if (!/^[\w-]+$/.test(owner) || !/^[\w.-]+$/.test(repo) || /^\.+$/.test(repo)) {
     return c.json({ error: "Invalid owner or repo." }, 400);
   }
 
-  const token = await getSessionToken(c, c.env);
-  const headers = githubHeaders(token);
+  const session = await getSession(c, c.env);
+  const headers = githubHeaders(session?.token ?? null);
   const base = `${GITHUB_API}/repos/${owner}/${repo}/pulls/${number}`;
 
   const prResponse = await fetch(base, { headers });
   if (prResponse.status === 404) {
-    return c.json(
-      {
-        error: token
-          ? "PR not found (or your account has no access to it)."
-          : "PR not found. If it lives in a private repo, sign in with GitHub first.",
-      },
-      404,
-    );
+    let hint = "PR not found. If it lives in a private repo, sign in with GitHub first.";
+    if (session) {
+      hint = hasPrivateAccess(session)
+        ? "PR not found (or your account has no access to it)."
+        : "PR not found. If it's in a private repo, re-sign-in with private repo access.";
+    }
+    return c.json({ error: hint }, 404);
   }
   if (prResponse.status === 403 || prResponse.status === 429) {
     return c.json({ error: "GitHub rate limit hit. Sign in with GitHub for a higher limit." }, 429);

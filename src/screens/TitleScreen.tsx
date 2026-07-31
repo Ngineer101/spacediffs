@@ -49,6 +49,16 @@ export function TitleScreen({
           <div className="auth-chip">
             <img src={user.avatarUrl} alt="" className="auth-avatar" />
             <span className="term">PILOT: {user.login.toUpperCase()}</span>
+            {!user.privateAccess && (
+              <a
+                className="link-btn term"
+                href="/api/auth/login?scope=repo"
+                onClick={() => sfx.uiSelect()}
+                title="Re-authorize with access to private repositories"
+              >
+                [+ PRIVATE REPOS]
+              </a>
+            )}
             <button
               className="link-btn term"
               onClick={() => {
@@ -60,9 +70,19 @@ export function TitleScreen({
             </button>
           </div>
         ) : (
-          <a className="btn btn-ghost" href="/api/auth/login" onClick={() => sfx.uiSelect()}>
-            ▸ SIGN IN WITH GITHUB
-          </a>
+          <div className="auth-chip auth-signin">
+            <a className="btn btn-ghost" href="/api/auth/login" onClick={() => sfx.uiSelect()}>
+              ▸ SIGN IN WITH GITHUB
+            </a>
+            <a
+              className="link-btn term"
+              href="/api/auth/login?scope=repo"
+              onClick={() => sfx.uiSelect()}
+              title="Grants the 'repo' scope so private PRs can be reviewed"
+            >
+              [ NEED PRIVATE REPOS? ]
+            </a>
+          </div>
         )}
       </header>
 

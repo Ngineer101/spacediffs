@@ -56,6 +56,8 @@ export interface GitHubUser {
   login: string;
   name: string | null;
   avatarUrl: string;
+  /** True when the session was granted the "repo" scope (private repos). */
+  privateAccess: boolean;
 }
 
 export interface SessionStats {
