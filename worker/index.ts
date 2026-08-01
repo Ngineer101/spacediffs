@@ -356,6 +356,39 @@ function ensureSchema(db: D1Database) {
 const DEMO_OWNER = "spacediffs";
 const MAX_SUBMITS_PER_HOUR = 12;
 const GLOBAL_SCORE_CAP = 10_000_000;
+const MIN_ACCOUNT_AGE_DAYS = 30;
+
+/**
+ * Perfect-play ceiling for a PR, mirroring the client's wave generation:
+ * each hunk is a wave of ≤30 invaders (≤30 pts each, padded to 6 with 10-pt
+ * octopi), plus a flagged elite (300), a generous 3-UFO allowance (900), the
+ * ×3 multiplier headroom on kills, and clear/accuracy bonuses. A forged
+ * score can't exceed what a flawless run of that exact diff could earn.
+ */
+function maxScoreFromPatches(patches: (string | null | undefined)[]): number {
+  let total = 0;
+  let waveIndex = 0;
+  for (const patch of patches) {
+    if (!patch) continue; // binary / oversized files are unscannable in-game too
+    const hunks: { changed: number }[] = [];
+    let current: { changed: number } | null = null;
+    for (const line of patch.split("\n")) {
+      if (line.startsWith("@@")) {
+        current = { changed: 0 };
+        hunks.push(current);
+      } else if (current && (line.startsWith("+") || line.startsWith("-"))) {
+        current.changed++;
+      }
+    }
+    for (const hunk of hunks) {
+      if (hunk.changed === 0) continue;
+      const invaderPoints = Math.min(hunk.changed, 30) * 30 + Math.max(6 - hunk.changed, 0) * 10;
+      total += 3 * (invaderPoints + 300 + 900) + 100 + 50 * waveIndex + 200;
+      waveIndex++;
+    }
+  }
+  return Math.min(total, GLOBAL_SCORE_CAP);
+}
 
 app.get("/api/leaderboard", async (c) => {
   await ensureSchema(c.env.DB);
@@ -432,7 +465,20 @@ app.post("/api/leaderboard", async (c) => {
   if (!userResponse.ok) {
     return c.json({ error: "GitHub session expired — sign in again." }, 401);
   }
-  const ghUser = (await userResponse.json()) as { login: string; avatar_url: string };
+  const ghUser = (await userResponse.json()) as {
+    login: string;
+    avatar_url: string;
+    created_at: string;
+  };
+
+  // Anti-sybil: throwaway accounts don't get to rank.
+  const accountAgeMs = Date.now() - new Date(ghUser.created_at).getTime();
+  if (!Number.isFinite(accountAgeMs) || accountAgeMs < MIN_ACCOUNT_AGE_DAYS * 86_400_000) {
+    return c.json(
+      { error: `GitHub account must be at least ${MIN_ACCOUNT_AGE_DAYS} days old to rank.` },
+      403,
+    );
+  }
 
   await ensureSchema(c.env.DB);
 
@@ -456,19 +502,23 @@ app.post("/api/leaderboard", async (c) => {
     .bind(ghUser.login, windowStart)
     .run();
 
-  // Plausibility: the PR must exist, and the score must fit a generous bound
-  // derived from the diff size. Continue-farming makes a strict bound
-  // impossible, so this only filters out the absurd.
-  const prResponse = await fetch(`${GITHUB_API}/repos/${prOwner}/${prRepo}/pulls/${prNumber}`, {
-    headers: githubHeaders(session.token),
-  });
-  if (!prResponse.ok) {
-    return c.json({ error: "Could not verify that PR on GitHub." }, 422);
+  // Plausibility: the PR must exist, and the score can't exceed the
+  // perfect-play ceiling computed from its actual hunks (same 300-file cap
+  // as the game itself).
+  const patches: (string | null | undefined)[] = [];
+  for (let page = 1; page <= MAX_FILE_PAGES; page++) {
+    const filesResponse = await fetch(
+      `${GITHUB_API}/repos/${prOwner}/${prRepo}/pulls/${prNumber}/files?per_page=100&page=${page}`,
+      { headers: githubHeaders(session.token) },
+    );
+    if (!filesResponse.ok) {
+      return c.json({ error: "Could not verify that PR on GitHub." }, 422);
+    }
+    const pageFiles = (await filesResponse.json()) as { patch?: string }[];
+    patches.push(...pageFiles.map((f) => f.patch));
+    if (pageFiles.length < 100) break;
   }
-  const pr = (await prResponse.json()) as { additions: number; deletions: number };
-  const changedLines = (pr.additions ?? 0) + (pr.deletions ?? 0);
-  const plausibleMax = Math.min(30_000 + changedLines * 400, GLOBAL_SCORE_CAP);
-  if (score > plausibleMax) {
+  if (score > maxScoreFromPatches(patches)) {
     return c.json({ error: "Score rejected by mission control (implausible for that PR)." }, 422);
   }
 

@@ -29,8 +29,9 @@ paste back on the PR.
   board keeps one row per pilot (personal best, real PRs only — training
   missions stay local). Top 10 on the title screen, full top 100 at
   [/leaderboard](https://spacediffs.com/leaderboard). Submissions are
-  rate-limited and sanity-checked server-side against the PR's actual diff
-  size.
+  rate-limited, require a GitHub account at least 30 days old, and are capped
+  server-side at the perfect-play ceiling computed from the PR's actual
+  hunks.
 
 ## GitHub-style URLs
 

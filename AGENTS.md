@@ -94,12 +94,14 @@ personal best only) and `submit_limits` (fixed-window rate limiting).
 - `GET /api/leaderboard?limit=N` — public, top 100 max, `Cache-Control` 30s.
 - `POST /api/leaderboard` — requires a session. Identity (login + avatar)
   comes from GitHub's `/user`, never from the request body. Rejections:
-  training missions (`spacediffs/*`), >12 submissions/hour/login, PRs that
-  don't exist on GitHub, and scores above a plausibility bound derived from
-  the PR's diff size (`30_000 + 400 × changed lines` — generous because
-  continue-farming makes a strict bound impossible; it only filters the
-  absurd). Best-per-player is enforced with an upsert guarded by
-  `improved = score > existing`.
+  training missions (`spacediffs/*`), >12 submissions/hour/login, GitHub
+  accounts younger than 30 days (anti-sybil), PRs that don't exist on GitHub,
+  and scores above the perfect-play ceiling computed from the PR's actual
+  hunks (`maxScoreFromPatches` — mirrors wave generation: ≤30 invaders/hunk,
+  elite + UFO allowance, ×3 multiplier, clear/accuracy bonuses). A forger can
+  fake a plausible score but not an absurd one; continue-farming beyond the
+  ceiling is knowingly sacrificed. Best-per-player is enforced with an upsert
+  guarded by `improved = score > existing`.
 - Submission is AUTOMATIC: the debrief auto-transmits for signed-in users
   (score > 0, real PR; StrictMode-guarded with a ref), with a RETRY button on
   failure. Signed-out users get the sign-in stash flow. The manual button was
