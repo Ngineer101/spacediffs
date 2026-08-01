@@ -618,7 +618,7 @@ body {
   padding: 8px 0 14px;
   max-height: calc(100dvh - 220px);
   font-family: var(--font-code);
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.5;
   tab-size: 4;
 }
@@ -646,7 +646,7 @@ body {
 
 .diff-text {
   flex: 1;
-  word-spacing: 2px;
+  word-spacing: 3px;
 }
 
 .diff-hunk-header {
