@@ -22,6 +22,16 @@ export function parsePrUrl(input: string): PrRef | null {
   return { owner: match[1], repo: match[2], number: Number(match[3]) };
 }
 
+export class PrFetchError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "PrFetchError";
+  }
+}
+
 export async function fetchPr(ref: PrRef): Promise<PRData> {
   const params = new URLSearchParams({
     owner: ref.owner,
@@ -29,9 +39,12 @@ export async function fetchPr(ref: PrRef): Promise<PRData> {
     number: String(ref.number),
   });
   const response = await fetch(`/api/pr?${params}`);
-  const data = (await response.json()) as { pr?: PRData; error?: string };
+  const data = (await response.json().catch(() => ({}))) as { pr?: PRData; error?: string };
   if (!response.ok || !data.pr) {
-    throw new Error(data.error ?? `Failed to load PR (${response.status}).`);
+    throw new PrFetchError(
+      data.error ?? `Failed to load PR (${response.status}).`,
+      response.status,
+    );
   }
   return data.pr;
 }

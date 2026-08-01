@@ -3,8 +3,9 @@ import { CRTOverlay } from "./components/CRTOverlay";
 import { Starfield, type StarfieldMode } from "./components/Starfield";
 import { buildWave } from "./game/waves";
 import { DEMO_PR } from "./lib/demo";
+import type { ErrorKind } from "./lib/errorMission";
 import type { HunkReview } from "./lib/exportReview";
-import { fetchMe, fetchPr, logout, parsePrUrl } from "./lib/github";
+import { fetchMe, fetchPr, logout, parsePrUrl, PrFetchError } from "./lib/github";
 import { submitScore, takePendingSubmission, type ScoreSubmission } from "./lib/leaderboard";
 import { parsePr } from "./lib/parseDiff";
 import { sfx } from "./lib/sound";
@@ -18,6 +19,7 @@ import {
 } from "./lib/types";
 import { BriefingScreen } from "./screens/BriefingScreen";
 import { DebriefScreen } from "./screens/DebriefScreen";
+import { ErrorScreen } from "./screens/ErrorScreen";
 import { LeaderboardScreen } from "./screens/LeaderboardScreen";
 import { ReviewScreen } from "./screens/ReviewScreen";
 import { TitleScreen } from "./screens/TitleScreen";
@@ -25,7 +27,15 @@ import { WaveScreen, type WaveOutcome } from "./screens/WaveScreen";
 
 const HISCORE_KEY = "spacediffs_hiscore";
 
-type Phase = "title" | "loading" | "briefing" | "review" | "wave" | "debrief" | "leaderboard";
+type Phase =
+  | "title"
+  | "loading"
+  | "briefing"
+  | "review"
+  | "wave"
+  | "debrief"
+  | "leaderboard"
+  | "anomaly";
 
 interface Mission {
   pr: PRData;
@@ -48,6 +58,8 @@ export default function App() {
   const [isNewHiScore, setIsNewHiScore] = useState(false);
   const [muted, setMuted] = useState(sfx.muted);
   const [transmitNote, setTransmitNote] = useState<string | null>(null);
+  const [anomaly, setAnomaly] = useState<{ kind: ErrorKind; detail: string | null } | null>(null);
+  const [anomalyBattle, setAnomalyBattle] = useState(false);
 
   useEffect(() => {
     void fetchMe().then(setUser);
@@ -122,6 +134,13 @@ export default function App() {
         const pr = await fetchPr(ref);
         startMission(pr);
       } catch (err) {
+        // A server-side failure (our worker or GitHub's API melting down) gets
+        // the full 500 experience; user errors stay on the title screen.
+        if (err instanceof PrFetchError && err.status >= 500) {
+          setAnomaly({ kind: "500", detail: err.message });
+          setPhase("anomaly");
+          return;
+        }
         setError(err instanceof Error ? err.message : "Failed to load PR.");
         window.history.replaceState(null, "", "/");
         setPhase("title");
@@ -132,10 +151,19 @@ export default function App() {
 
   // GitHub-style deep links: pasting a PR URL with github.com swapped for
   // spacediffs.com lands on /<owner>/<repo>/pull/<n> and boots the mission.
-  // /leaderboard is the only other routed page.
+  // /leaderboard and /500 (meltdown easter egg) are the other routed pages;
+  // anything else is a lost sector — the playable 404.
   useEffect(() => {
-    if (window.location.pathname === "/leaderboard") setPhase("leaderboard");
-    else if (parsePrUrl(window.location.pathname)) void handleLaunch(window.location.pathname);
+    const path = window.location.pathname;
+    if (path === "/leaderboard") setPhase("leaderboard");
+    else if (path === "/500") {
+      setAnomaly({ kind: "500", detail: null });
+      setPhase("anomaly");
+    } else if (parsePrUrl(path)) void handleLaunch(path);
+    else if (path !== "/") {
+      setAnomaly({ kind: "404", detail: path });
+      setPhase("anomaly");
+    }
   }, [handleLaunch]);
 
   const openLeaderboard = useCallback(() => {
@@ -211,11 +239,16 @@ export default function App() {
     window.history.replaceState(null, "", "/");
     setMission(null);
     setError(null);
+    setAnomaly(null);
     setPhase("title");
   }, []);
 
   const starfieldMode: StarfieldMode =
-    phase === "loading" ? "warp" : phase === "wave" ? "battle" : "drift";
+    phase === "loading"
+      ? "warp"
+      : phase === "wave" || (phase === "anomaly" && anomalyBattle)
+        ? "battle"
+        : "drift";
 
   const entries: HunkReview[] = useMemo(
     () => (mission ? mission.hunks.map((hunk, i) => ({ hunk, review: reviews[i] ?? null })) : []),
@@ -266,6 +299,15 @@ export default function App() {
         )}
 
         {phase === "leaderboard" && <LeaderboardScreen user={user} onBack={closeLeaderboard} />}
+
+        {phase === "anomaly" && anomaly && (
+          <ErrorScreen
+            kind={anomaly.kind}
+            detail={anomaly.detail}
+            onHome={handleRestart}
+            onBattleChange={setAnomalyBattle}
+          />
+        )}
 
         {phase === "loading" && (
           <div className="screen loading-screen">
