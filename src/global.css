@@ -16,6 +16,7 @@
   --panel-bg: rgba(4, 18, 9, 0.72);
   --font-pixel: "Press Start 2P", monospace;
   --font-term: "VT323", monospace;
+  --font-code: "Share Tech Mono", "VT323", monospace;
 }
 
 * {
@@ -616,8 +617,10 @@ body {
   flex: 1;
   padding: 8px 0 14px;
   max-height: calc(100dvh - 220px);
-  font-size: 19px;
-  line-height: 1.32;
+  font-family: var(--font-code);
+  font-size: 16px;
+  line-height: 1.5;
+  tab-size: 4;
 }
 
 .diff-line {
@@ -643,6 +646,7 @@ body {
 
 .diff-text {
   flex: 1;
+  word-spacing: 3px;
 }
 
 .diff-hunk-header {
