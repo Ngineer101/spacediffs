@@ -1188,6 +1188,158 @@ body {
 }
 
 /* ------------------------------------------------------------
+   Error pages (404 / 500) — unsanctioned combat zones
+   ------------------------------------------------------------ */
+
+.error-screen {
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+}
+
+.error-code {
+  position: relative;
+  font-size: clamp(64px, 16vw, 132px);
+  line-height: 1;
+  margin: 6px 0 2px;
+  animation: error-jitter 3.2s steps(1) infinite;
+}
+
+.error-404 .error-code {
+  color: var(--amber);
+  text-shadow:
+    0 0 12px rgba(255, 176, 0, 0.9),
+    0 0 48px rgba(255, 176, 0, 0.45),
+    4px 4px 0 rgba(80, 50, 0, 0.9);
+}
+
+.error-500 .error-code {
+  color: var(--red);
+  text-shadow:
+    0 0 12px rgba(255, 68, 102, 0.9),
+    0 0 48px rgba(255, 68, 102, 0.45),
+    4px 4px 0 rgba(70, 0, 20, 0.9);
+}
+
+/* Chromatic ghost copies that tear sideways, CRT sync-loss style. */
+.error-code::before,
+.error-code::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  text-shadow: none;
+}
+
+.error-code::before {
+  color: var(--cyan);
+  animation: error-tear-a 3.2s steps(1) infinite;
+}
+
+.error-code::after {
+  color: var(--magenta);
+  animation: error-tear-b 3.2s steps(1) infinite;
+}
+
+@keyframes error-jitter {
+  0%,
+  91% {
+    transform: translate(0, 0);
+  }
+  92% {
+    transform: translate(-3px, 1px) skewX(-4deg);
+  }
+  94% {
+    transform: translate(3px, -1px) skewX(3deg);
+  }
+  96% {
+    transform: translate(0, 0);
+  }
+}
+
+@keyframes error-tear-a {
+  0%,
+  91% {
+    opacity: 0;
+  }
+  92%,
+  95% {
+    opacity: 0.7;
+    transform: translate(-6px, -2px);
+    clip-path: inset(20% 0 45% 0);
+  }
+  96%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes error-tear-b {
+  0%,
+  91% {
+    opacity: 0;
+  }
+  92%,
+  95% {
+    opacity: 0.7;
+    transform: translate(6px, 2px);
+    clip-path: inset(55% 0 15% 0);
+  }
+  96%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.error-title {
+  font-size: clamp(14px, 2.6vw, 24px);
+  letter-spacing: 5px;
+  margin-top: 6px;
+  text-shadow:
+    0 0 6px currentColor,
+    0 0 22px rgba(51, 255, 102, 0.5);
+}
+
+.error-500 .error-title {
+  color: var(--red-soft);
+}
+
+.error-sub {
+  color: var(--green-dim);
+  max-width: 640px;
+  overflow-wrap: anywhere;
+}
+
+.error-panel {
+  margin-top: 14px;
+  text-align: left;
+}
+
+.error-protocol {
+  color: var(--green-bright);
+  display: grid;
+  gap: 4px;
+}
+
+.error-lastrun {
+  margin-top: 14px;
+  letter-spacing: 2px;
+}
+
+.void-record {
+  color: var(--amber);
+  letter-spacing: 3px;
+}
+
+.error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+/* ------------------------------------------------------------
    Small screens
    ------------------------------------------------------------ */
 

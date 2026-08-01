@@ -21,12 +21,14 @@ export function WaveScreen({
   entryScore,
   entryLives,
   multiplier,
+  retreatLabel = "RETREAT TO DEBRIEF [ESC]",
   onOutcome,
 }: {
   wave: WaveConfig;
   entryScore: number;
   entryLives: number;
   multiplier: number;
+  retreatLabel?: string;
   onOutcome: (outcome: WaveOutcome) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -198,7 +200,8 @@ export function WaveScreen({
         <span>SCORE {displayScore.toLocaleString()}</span>
         <span className="amber">×{multiplier.toFixed(2)}</span>
         <span className="hud-title">
-          WAVE {wave.waveIndex + 1}/{wave.totalWaves} ▸ {wave.file.split("/").pop()}
+          WAVE {wave.waveIndex + 1}/{Number.isFinite(wave.totalWaves) ? wave.totalWaves : "∞"} ▸{" "}
+          {wave.file.split("/").pop()}
         </span>
         <span className="lives-chip">
           {Array.from({ length: Math.max(lives, 0) }, (_, i) => (
@@ -290,7 +293,7 @@ export function WaveScreen({
                   })
                 }
               >
-                RETREAT TO DEBRIEF [ESC]
+                {retreatLabel}
               </button>
             </div>
           </div>
