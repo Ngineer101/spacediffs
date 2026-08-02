@@ -208,6 +208,17 @@ export function TitleScreen({
       <p className="footnote term">
         REVIEW THE DIFF · FLAG THE BUGS · SHOOT THE CHANGES · © 1978-2026
       </p>
+      <footer className="site-footer term">
+        BUILT WITH <PixelIcon kind="heart" scale={2} className="footer-heart" /> BY{" "}
+        <a
+          href="https://github.com/Ngineer101/"
+          target="_blank"
+          rel="noreferrer"
+          onClick={() => sfx.uiSelect()}
+        >
+          NGINEER101
+        </a>
+      </footer>
     </div>
   );
 }

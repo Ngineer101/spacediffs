@@ -1,4 +1,4 @@
-export type SpriteKind = "squid" | "crab" | "octopus" | "bug" | "ufo" | "player";
+export type SpriteKind = "squid" | "crab" | "octopus" | "bug" | "ufo" | "player" | "heart";
 
 export const SPRITE_COLORS: Record<SpriteKind, string> = {
   squid: "#33ff66",
@@ -7,6 +7,7 @@ export const SPRITE_COLORS: Record<SpriteKind, string> = {
   bug: "#ffb000",
   ufo: "#ff55ff",
   player: "#33ddff",
+  heart: "#ff4466",
 };
 
 const PIXELS: Record<SpriteKind, string[][]> = {
@@ -125,6 +126,7 @@ const PIXELS: Record<SpriteKind, string[][]> = {
       "#############",
     ],
   ],
+  heart: [[".##..##.", "########", "########", "########", ".######.", "..####..", "...##..."]],
 };
 
 export interface SpriteSet {

@@ -1,4 +1,4 @@
-import { makeSprite, type SpriteKind, type SpriteSet } from "./sprites";
+import { makeSprite, SPRITE_COLORS, type SpriteKind, type SpriteSet } from "./sprites";
 import type { InvaderSpec, WaveConfig } from "./waves";
 
 export const LOGICAL_W = 448;
@@ -653,14 +653,7 @@ export class GameEngine {
   }
 
   private spriteColor(kind: SpriteKind): string {
-    return {
-      squid: "#33ff66",
-      crab: "#ff4466",
-      octopus: "#7fd694",
-      bug: "#ffb000",
-      ufo: "#ff55ff",
-      player: "#33ddff",
-    }[kind];
+    return SPRITE_COLORS[kind];
   }
 
   private explode(x: number, y: number, color: string, points: number | null, count = 14) {
